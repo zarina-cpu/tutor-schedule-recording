@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TutorBook — кабинет</title>
+    <script>
+      (function () {
+        var stored = localStorage.getItem("tutorbook-theme");
+        var dark =
+          stored === "dark" ||
+          (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              paper: "#FAF7F9",
+              ink: "#1F1624",
+              margin: "#6B21A8",
+              pen: "#6B21A8",
+              night: "#110C15",
+              dusk: "#1B1422",
+              mist: "#A855F7",
+              pearl: "#F5F0F7",
+              line: "#EAE2E8",
+              linight: "#2E2238",
+            },
+            fontFamily: {
+              display: ['"Fraunces"', "Georgia", "serif"],
+              sans: ['"Figtree"', "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      .status-menu {
+        min-width: 11.75rem;
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-paper text-ink font-sans dark:bg-night dark:text-pearl">
+    <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+      <header class="mb-8 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <a href="/" class="font-display text-2xl leading-none text-pen dark:text-mist">TutorBook</a>
+          <p class="mt-2 text-sm text-ink/70 dark:text-pearl/70">
+            <% if (authorized && session && session.role === "teacher") { %>
+            Кабинет преподавателя: <%= session.teacherName %> (<%= session.language %>)
+            <% } else if (authorized && session && session.role === "school") { %>
+            Администратор школы
+            <% } else { %>
+            Расписание преподавателей и записи недели
+            <% } %>
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <% if (telegramLink) { %>
+          <a
+            href="<%= telegramLink %>"
+            class="rounded-full border border-line px-3 py-2 text-sm dark:border-linight"
+            >Telegram</a
+          >
+          <% } %>
+          <button
+            id="theme-toggle"
+            type="button"
+            class="rounded-full border border-line px-3 py-2 text-sm dark:border-linight"
+          >
+            Тема
+          </button>
+        </div>
+      </header>
+
+      <% if (!authorized) { %>
+      <h1 class="font-display text-4xl">Вход в кабинет</h1>
+      <p class="mt-3 max-w-md text-sm text-ink/70 dark:text-pearl/70">
+        Введите пароль администратора школы или личный код преподавателя.
+      </p>
+      <% if (loginError) { %>
+      <p class="mt-4 border-l-4 border-margin px-4 py-3 text-sm" role="alert">Неверный пароль.</p>
+      <% } %>
+      <form action="/admin/login" method="POST" class="mt-8 max-w-sm space-y-4">
+        <label class="block">
+          <span class="text-sm">Пароль или код доступа</span>
+          <input
+            type="password"
+            name="password"
+            required
+            class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none focus:border-pen dark:border-linight"
+          />
+        </label>
+        <button type="submit" class="w-full bg-pen px-4 py-3 text-paper dark:bg-mist dark:text-night">
+          Войти
+        </button>
+      </form>
+      <% } else { %>
+      <%
+        var MONTHS_SHORT = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
+        var MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+        var WEEKDAYS = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
+        function dateParts(iso) {
+          var parts = String(iso).split("-");
+          var js = new Date(iso + "T12:00:00");
+          return { y: Number(parts[0]), m: Number(parts[1]), d: Number(parts[2]), weekday: js.getDay() };
+        }
+        function padDay(value) {
+          return value < 10 ? "0" + value : String(value);
+        }
+        function navRange(startIso, endIso) {
+          var start = dateParts(startIso);
+          var end = dateParts(endIso);
+          return padDay(start.d) + " " + MONTHS_SHORT[start.m - 1] + " — " + padDay(end.d) + " " + MONTHS_SHORT[end.m - 1] + " " + end.y;
+        }
+        function agendaHeading(iso) {
+          var parts = dateParts(iso);
+          return WEEKDAYS[parts.weekday] + ", " + parts.d + " " + MONTHS_GEN[parts.m - 1];
+        }
+        function lessonsLabel(count) {
+          var n10 = count % 10;
+          var n100 = count % 100;
+          if (n10 === 1 && n100 !== 11) return count + " занятие";
+          if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return count + " занятия";
+          return count + " занятий";
+        }
+        function weekHref(week) {
+          var href = "/admin?week=" + week;
+          if (session.role === "school" && filterLanguage) href += "&language=" + encodeURIComponent(filterLanguage);
+          if (session.role === "school" && filterTeacherId) href += "&teacher_id=" + encodeURIComponent(filterTeacherId);
+          return href;
+        }
+        function statusPill(status) {
+          if (status === "Новая") return "bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-200";
+          if (status === "Подтверждена") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200";
+          if (status === "Отменена") return "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-200";
+          return "bg-[#F5F0F7] text-ink/70 dark:bg-[#2E2238] dark:text-pearl/70";
+        }
+        function statusDot(status) {
+          if (status === "Новая") return "bg-blue-500";
+          if (status === "Подтверждена") return "bg-emerald-500";
+          if (status === "Отменена") return "bg-red-500";
+          return "bg-ink/35 dark:bg-pearl/40";
+        }
+        function telegramUrl(contact) {
+          var text = String(contact || "").trim();
+          if (text.charAt(0) !== "@") return "";
+          return "https://t.me/" + encodeURIComponent(text.slice(1));
+        }
+        function shortService(name) {
+          return String(name || "").replace(/\s*\([^)]+\)\s*$/, "");
+        }
+        var weekStart = weekDates.length ? weekDates[0].date : weekMonday;
+        var weekEnd = weekDates.length ? weekDates[weekDates.length - 1].date : weekMonday;
+        var weekNavText = weekDates.length ? navRange(weekStart, weekEnd) : weekLabel;
+        var agendaMap = {};
+        bookings.forEach(function (booking) {
+          if (!agendaMap[booking.date]) agendaMap[booking.date] = [];
+          agendaMap[booking.date].push(booking);
+        });
+        var agendaDays = Object.keys(agendaMap).sort().map(function (date) {
+          return { date: date, heading: agendaHeading(date), items: agendaMap[date] };
+        });
+      %>
+      <div class="flex flex-col gap-3 border-b border-line pb-6 dark:border-linight sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex flex-wrap items-center gap-2">
+          <nav
+            class="inline-flex items-center rounded-full border border-[#EAE2E8] bg-white shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422]"
+            aria-label="Неделя"
+          >
+            <a
+              href="<%= weekHref(prevWeek) %>"
+              class="flex h-10 w-10 items-center justify-center rounded-l-full text-pen transition hover:bg-[#F5F0F7] dark:text-mist dark:hover:bg-[#2E2238]"
+              aria-label="Прошлая неделя"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M10 3.5 5.5 8 10 12.5" />
+              </svg>
+            </a>
+            <p class="min-w-[12.5rem] px-1 text-center text-sm font-medium tabular-nums"><%= weekNavText %></p>
+            <a
+              href="<%= weekHref(nextWeek) %>"
+              class="flex h-10 w-10 items-center justify-center rounded-r-full text-pen transition hover:bg-[#F5F0F7] dark:text-mist dark:hover:bg-[#2E2238]"
+              aria-label="Следующая неделя"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M6 3.5 10.5 8 6 12.5" />
+              </svg>
+            </a>
+          </nav>
+          <a
+            href="<%= weekHref(currentWeek) %>"
+            class="rounded-full border px-3 py-2 text-sm <%= weekMonday === currentWeek ? 'border-pen bg-pen text-paper dark:border-mist dark:bg-mist dark:text-night' : 'border-[#EAE2E8] bg-white dark:border-[#2E2238] dark:bg-[#1B1422]' %>"
+          >
+            Текущая неделя
+          </a>
+        </div>
+        <form action="/admin/logout" method="POST">
+          <button type="submit" class="rounded-full border border-line px-3 py-2 text-sm dark:border-linight">Выйти</button>
+        </form>
+      </div>
+
+      <section class="mt-8">
+        <h1 class="font-display text-3xl sm:text-4xl">Преподаватели</h1>
+        <p class="mt-2 text-sm text-ink/65 dark:text-pearl/65">Загрузка на выбранную неделю: уроки относительно окон в графике учителя.</p>
+        <div class="mt-6 grid gap-4 md:grid-cols-2">
+          <% teacherCards.forEach(function (teacher) { %>
+          <article class="rounded-3xl border border-line bg-pearl/80 p-5 dark:border-linight dark:bg-dusk">
+            <h2 class="font-display text-2xl leading-tight"><%= teacher.name %></h2>
+            <p class="mt-1 text-sm text-ink/70 dark:text-pearl/70">
+              <%= teacher.role || "Преподаватель" %> · <%= teacher.language %> · <%= teacher.hours %>
+            </p>
+            <% if (teacher.is_active === false) { %>
+            <p class="mt-2 text-xs text-ink/50 dark:text-pearl/50">Не принимает записи</p>
+            <% } %>
+            <div class="mt-5 grid grid-cols-7 gap-1.5">
+              <% teacher.days.forEach(function (day) { %>
+              <div class="text-center">
+                <p class="text-[11px] text-ink/50 dark:text-pearl/45"><%= day.key %></p>
+                <% if (day.off) { %>
+                <div class="mt-2 flex h-16 items-end justify-center rounded-lg bg-line/70 dark:bg-linight">
+                  <span class="mb-2 text-[10px] text-ink/45 dark:text-pearl/40">вых</span>
+                </div>
+                <% } else { %>
+                <div class="mt-2 flex h-16 items-end justify-center rounded-lg bg-line/70 px-1 pb-1 dark:bg-linight" title="<%= day.booked %>/<%= day.total %>">
+                  <div
+                    class="w-full rounded-md bg-pen dark:bg-mist"
+                    style="height: <%= Math.max(day.percent, day.booked ? 12 : 4) %>%"
+                  ></div>
+                </div>
+                <p class="mt-1 text-[10px] leading-tight text-ink/60 dark:text-pearl/55"><%= day.percent %>%</p>
+                <p class="text-[10px] text-ink/45 dark:text-pearl/40"><%= day.booked %> ур.</p>
+                <% } %>
+              </div>
+              <% }) %>
+            </div>
+          </article>
+          <% }) %>
+        </div>
+      </section>
+
+      <section class="mt-12 overflow-visible rounded-3xl border border-[#EAE2E8] bg-white p-6 shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422] md:p-8">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 class="font-display text-3xl">Записи недели</h2>
+            <p class="mt-1 text-sm text-ink/65 dark:text-pearl/65">Уроки выбранной недели, сгруппированные по дням.</p>
+          </div>
+          <% if (session.role === "school") { %>
+          <form method="GET" action="/admin" class="flex flex-wrap gap-2">
+            <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <label class="sr-only" for="filter-teacher">Преподаватель</label>
+            <select
+              id="filter-teacher"
+              name="teacher_id"
+              onchange="this.form.submit()"
+              class="rounded-full border border-[#EAE2E8] bg-white px-3 py-2 text-sm dark:border-[#2E2238] dark:bg-[#110C15]"
+            >
+              <option value="">Все преподаватели</option>
+              <% teachers.forEach(function (teacher) { %>
+              <option value="<%= teacher.id %>" <%= String(teacher.id) === String(filterTeacherId) ? "selected" : "" %>><%= teacher.name %></option>
+              <% }) %>
+            </select>
+            <label class="sr-only" for="filter-language">Язык</label>
+            <select
+              id="filter-language"
+              name="language"
+              onchange="this.form.submit()"
+              class="rounded-full border border-[#EAE2E8] bg-white px-3 py-2 text-sm dark:border-[#2E2238] dark:bg-[#110C15]"
+            >
+              <option value="">Все языки</option>
+              <% languages.forEach(function (language) { %>
+              <option value="<%= language %>" <%= filterLanguage === language ? "selected" : "" %>><%= language %></option>
+              <% }) %>
+            </select>
+          </form>
+          <% } %>
+        </div>
+
+        <% if (!agendaDays.length) { %>
+        <div class="mt-10 flex flex-col items-center px-4 py-10 text-center">
+          <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F5F0F7] text-pen dark:bg-[#2E2238] dark:text-mist">
+            <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+              <path d="M8 3.5v3M16 3.5v3M3.5 10h17" />
+            </svg>
+          </span>
+          <p class="mt-4 font-display text-2xl">На эту неделю занятий пока не запланировано</p>
+          <p class="mt-2 max-w-sm text-sm text-ink/60 dark:text-pearl/60">Новые заявки с сайта и из Telegram появятся здесь в день урока.</p>
+        </div>
+        <% } else { %>
+        <div class="relative z-20 mt-8 space-y-8 overflow-visible">
+          <% agendaDays.forEach(function (day) { %>
+          <section class="overflow-visible">
+            <div class="flex items-baseline justify-between gap-3 border-b border-[#EAE2E8] pb-2 dark:border-[#2E2238]">
+              <h3 class="font-display text-xl"><%= day.heading %></h3>
+              <p class="text-sm text-ink/50 dark:text-pearl/50"><%= lessonsLabel(day.items.length) %></p>
+            </div>
+            <ul class="divide-y divide-[#EAE2E8] overflow-visible dark:divide-[#2E2238]">
+              <% day.items.forEach(function (b) { %>
+              <% var tg = telegramUrl(b.contact); %>
+              <li class="group overflow-visible">
+                <div class="flex flex-col gap-3 overflow-visible rounded-2xl px-1 py-4 transition hover:bg-[#FAF7F9] dark:hover:bg-[#110C15]/70 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="flex min-w-0 flex-1 items-start gap-3">
+                    <div class="flex shrink-0 items-center gap-2 pt-0.5">
+                      <span class="h-2 w-2 rounded-full <%= statusDot(b.status) %>" aria-hidden="true"></span>
+                      <span class="rounded-lg bg-[#F3E8FF] px-2.5 py-1 text-sm font-medium tabular-nums text-pen dark:bg-[#2E2238] dark:text-mist"><%= b.time_slot %></span>
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p class="font-medium"><%= b.student_name %></p>
+                        <% if (tg) { %>
+                        <a
+                          href="<%= tg %>"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex items-center gap-1 text-sm text-pen hover:underline dark:text-mist"
+                        >
+                          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M21.5 4.3 18.3 20c-.24 1.05-.87 1.3-1.76.81l-4.86-3.58-2.34 2.26c-.26.26-.48.48-.98.48l.35-4.94L17.9 7.4c.38-.33-.08-.51-.58-.18L7.2 13.67l-4.78-1.5c-1.04-.32-1.05-1.04.22-1.54L20.1 3.8c.86-.33 1.62.2 1.4.5Z" />
+                          </svg>
+                          <%= b.contact %>
+                        </a>
+                        <% } else { %>
+                        <p class="text-sm text-ink/60 dark:text-pearl/60"><%= b.contact %></p>
+                        <% } %>
+                      </div>
+                      <div class="mt-2 flex flex-wrap gap-1.5">
+                        <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= b.language %></span>
+                        <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= b.teacher_name || b.teacher || "—" %></span>
+                        <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= shortService(b.service) %></span>
+                      </div>
+                    </div>
+                  </div>
+                  <form action="/admin/status/<%= b.id %>" method="POST" class="status-dropdown relative z-10 shrink-0 overflow-visible sm:pl-3">
+                    <input type="hidden" name="week" value="<%= weekMonday %>" />
+                    <input type="hidden" name="language" value="<%= filterLanguage %>" />
+                    <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
+                    <input type="hidden" name="status" value="<%= b.status %>" />
+                    <button
+                      type="button"
+                      class="status-trigger inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium <%= statusPill(b.status) %>"
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-label="Статус"
+                    >
+                      <%= b.status %>
+                      <svg class="h-3 w-3 opacity-70" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M2.5 4.5 6 8l3.5-3.5" />
+                      </svg>
+                    </button>
+                    <div
+                      class="status-menu absolute right-0 top-full z-50 mt-1 hidden rounded-xl border border-slate-200 bg-white py-1 text-slate-800 shadow-lg dark:border-[#3A2D4C] dark:bg-[#231B2E] dark:text-slate-100 dark:shadow-2xl"
+                      role="listbox"
+                    >
+                      <% statuses.forEach(function (status) { %>
+                      <button
+                        type="button"
+                        class="status-option flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-white/10"
+                        data-status="<%= status %>"
+                        role="option"
+                        aria-selected="<%= status === b.status ? 'true' : 'false' %>"
+                      >
+                        <span class="h-2 w-2 shrink-0 rounded-full <%= statusDot(status) %>" aria-hidden="true"></span>
+                        <span class="flex-1"><%= status %></span>
+                        <% if (status === b.status) { %>
+                        <svg class="h-3.5 w-3.5 text-pen dark:text-mist" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                          <path d="M3 8.2 6.4 11.5 13 4.5" />
+                        </svg>
+                        <% } %>
+                      </button>
+                      <% }) %>
+                    </div>
+                  </form>
+                </div>
+              </li>
+              <% }) %>
+            </ul>
+          </section>
+          <% }) %>
+        </div>
+        <% } %>
+      </section>
+
+      <% if (session.role === "school") { %>
+      <section class="mt-12 rounded-3xl border border-line bg-pearl/60 p-6 dark:border-linight dark:bg-dusk sm:p-8">
+        <h2 class="font-display text-3xl">Новый преподаватель</h2>
+        <p class="mt-2 text-sm text-ink/65 dark:text-pearl/65">Карточка появится в сетке сразу после сохранения. Слоты ученикам считаются по дням смены и часам.</p>
+        <form action="/admin/teachers" method="POST" class="mt-6 space-y-5">
+          <input type="hidden" name="week" value="<%= weekMonday %>" />
+          <div class="grid gap-4 sm:grid-cols-2">
+            <label class="block">
+              <span class="text-sm">Имя</span>
+              <input
+                type="text"
+                name="name"
+                required
+                maxlength="100"
+                placeholder="Имя и фамилия"
+                class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none focus:border-pen dark:border-linight"
+              />
+            </label>
+            <label class="block">
+              <span class="text-sm">Специализация / Роль</span>
+              <input
+                type="text"
+                name="role"
+                maxlength="150"
+                placeholder="Носитель языка · IELTS 8.5"
+                class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none focus:border-pen dark:border-linight"
+              />
+            </label>
+          </div>
+          <label class="block max-w-sm">
+            <span class="text-sm">Язык</span>
+            <select
+              name="language"
+              required
+              class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none dark:border-linight dark:bg-dusk"
+            >
+              <% languages.forEach(function (language) { %>
+              <option value="<%= language %>"><%= language %></option>
+              <% }) %>
+            </select>
+          </label>
+          <fieldset>
+            <legend class="text-sm">Дни смены</legend>
+            <div class="mt-3 flex flex-wrap gap-3">
+              <% weekDays.forEach(function (day) { %>
+              <label class="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="work_days"
+                  value="<%= day %>"
+                  <%= ["пн","вт","ср","чт","пт"].indexOf(day) !== -1 ? "checked" : "" %>
+                />
+                <%= day %>
+              </label>
+              <% }) %>
+            </div>
+          </fieldset>
+          <div class="grid max-w-md grid-cols-2 gap-4">
+            <label class="block">
+              <span class="text-sm">Начало</span>
+              <input
+                type="time"
+                name="start_time"
+                value="10:00"
+                required
+                class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none dark:border-linight"
+              />
+            </label>
+            <label class="block">
+              <span class="text-sm">Конец</span>
+              <input
+                type="time"
+                name="end_time"
+                value="20:00"
+                required
+                class="mt-1 w-full border-0 border-b border-ink/30 bg-transparent py-2 outline-none dark:border-linight"
+              />
+            </label>
+          </div>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="is_active" checked />
+            Активен (принимает записи)
+          </label>
+          <div>
+            <button type="submit" class="rounded-full bg-pen px-5 py-3 text-sm text-paper dark:bg-mist dark:text-night">
+              Добавить преподавателя
+            </button>
+          </div>
+        </form>
+      </section>
+      <% } %>
+      <% } %>
+    </div>
+    <script>
+      document.getElementById("theme-toggle").addEventListener("click", function () {
+        var root = document.documentElement;
+        var next = root.classList.contains("dark") ? "light" : "dark";
+        root.classList.toggle("dark", next === "dark");
+        localStorage.setItem("tutorbook-theme", next);
+      });
+
+      function closeStatusMenus(exceptMenu) {
+        document.querySelectorAll(".status-menu").forEach(function (menu) {
+          if (menu === exceptMenu) return;
+          menu.classList.add("hidden");
+          var trigger = menu.parentElement && menu.parentElement.querySelector(".status-trigger");
+          if (trigger) trigger.setAttribute("aria-expanded", "false");
+        });
+      }
+
+      document.addEventListener("click", function (event) {
+        var trigger = event.target.closest(".status-trigger");
+        var option = event.target.closest(".status-option");
+        var menu = event.target.closest(".status-menu");
+
+        if (trigger) {
+          event.preventDefault();
+          var panel = trigger.parentElement.querySelector(".status-menu");
+          var isOpen = panel && !panel.classList.contains("hidden");
+          closeStatusMenus();
+          if (panel && !isOpen) {
+            panel.classList.remove("hidden");
+            trigger.setAttribute("aria-expanded", "true");
+          }
+          return;
+        }
+
+        if (option) {
+          event.preventDefault();
+          var form = option.closest("form");
+          var input = form && form.querySelector('input[name="status"]');
+          if (form && input) {
+            input.value = option.getAttribute("data-status") || "";
+            form.submit();
+          }
+          return;
+        }
+
+        if (!menu) closeStatusMenus();
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") closeStatusMenus();
+      });
+    </script>
+  </body>
+</html>
