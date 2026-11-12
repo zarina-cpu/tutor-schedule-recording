@@ -53,7 +53,7 @@ const {
   notifyTutorPaid,
   sendReceiptToAdmin,
   notifyPaidIfTelegram,
-  notifyStudentTelegram,
+  notifyReceiptDecision,
   telegramChatFromContact,
 } = require("../lib/notify");
 const {
@@ -678,13 +678,7 @@ app.post("/admin/payment/:id", async (req, res) => {
   const action = String(req.body.action || "");
   const payment_status = action === "reject" ? "Отклонено" : "Оплачено";
   const booking = await updateBookingPayment(req.params.id, { payment_status });
-  if (booking && booking.tg_chat_id) {
-    const text =
-      payment_status === "Оплачено"
-        ? "✅ Оплата по чеку подтверждена. Ваша запись активна."
-        : "❌ Чек отклонён. Напишите преподавателю или запишитесь заново: /start";
-    await notifyStudentTelegram(booking.tg_chat_id, text);
-  }
+  await notifyReceiptDecision(booking, payment_status === "Оплачено");
   res.redirect(adminRedirect(session, req.body));
 });
 
