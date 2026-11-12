@@ -62,7 +62,7 @@
             <% } else if (authorized && session && session.role === "school") { %>
             Администратор школы
             <% } else { %>
-            Расписание преподавателей и записи недели
+            Расписание преподавателей и записи периода
             <% } %>
           </p>
         </div>
@@ -135,8 +135,14 @@
           if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return count + " занятия";
           return count + " занятий";
         }
-        function weekHref(week) {
-          var href = "/admin?week=" + week;
+        function periodHref(opts) {
+          var view = (opts && opts.view) || viewMode;
+          var href = "/admin?view=" + encodeURIComponent(view);
+          if (view === "month") {
+            href += "&month=" + encodeURIComponent((opts && opts.month) || monthStart);
+          } else {
+            href += "&week=" + encodeURIComponent((opts && opts.week) || weekMonday);
+          }
           if (session.role === "school" && filterLanguage) href += "&language=" + encodeURIComponent(filterLanguage);
           if (session.role === "school" && filterTeacherId) href += "&teacher_id=" + encodeURIComponent(filterTeacherId);
           return href;
@@ -168,9 +174,11 @@
           if (tone === "reject") return "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200";
           return "bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300";
         }
+        var isMonth = viewMode === "month";
         var weekStart = weekDates.length ? weekDates[0].date : weekMonday;
         var weekEnd = weekDates.length ? weekDates[weekDates.length - 1].date : weekMonday;
         var weekNavText = weekDates.length ? navRange(weekStart, weekEnd) : weekLabel;
+        var periodNavText = isMonth ? monthLabel : weekNavText;
         var agendaMap = {};
         bookings.forEach(function (booking) {
           if (!agendaMap[booking.date]) agendaMap[booking.date] = [];
@@ -182,24 +190,38 @@
       %>
       <div class="flex flex-col gap-3 border-b border-line pb-6 dark:border-linight sm:flex-row sm:items-center sm:justify-between">
         <div class="flex flex-wrap items-center gap-2">
-          <nav
-            class="inline-flex items-center rounded-full border border-[#EAE2E8] bg-white shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422]"
-            aria-label="Неделя"
+          <div
+            class="inline-flex rounded-full border border-[#EAE2E8] bg-white p-1 shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422]"
+            role="group"
+            aria-label="Режим просмотра"
           >
             <a
-              href="<%= weekHref(prevWeek) %>"
+              href="<%= periodHref({ view: 'week', week: weekMonday }) %>"
+              class="rounded-full px-3.5 py-1.5 text-sm font-medium transition <%= !isMonth ? 'bg-pen text-paper dark:bg-mist dark:text-night' : 'text-ink/70 hover:bg-[#F5F0F7] dark:text-pearl/70 dark:hover:bg-[#2E2238]' %>"
+            >Неделя</a>
+            <a
+              href="<%= periodHref({ view: 'month', month: monthStart }) %>"
+              class="rounded-full px-3.5 py-1.5 text-sm font-medium transition <%= isMonth ? 'bg-pen text-paper dark:bg-mist dark:text-night' : 'text-ink/70 hover:bg-[#F5F0F7] dark:text-pearl/70 dark:hover:bg-[#2E2238]' %>"
+            >Месяц</a>
+          </div>
+          <nav
+            class="inline-flex items-center rounded-full border border-[#EAE2E8] bg-white shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422]"
+            aria-label="<%= isMonth ? 'Месяц' : 'Неделя' %>"
+          >
+            <a
+              href="<%= isMonth ? periodHref({ month: prevMonth }) : periodHref({ week: prevWeek }) %>"
               class="flex h-10 w-10 items-center justify-center rounded-l-full text-pen transition hover:bg-[#F5F0F7] dark:text-mist dark:hover:bg-[#2E2238]"
-              aria-label="Прошлая неделя"
+              aria-label="<%= isMonth ? 'Прошлый месяц' : 'Прошлая неделя' %>"
             >
               <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M10 3.5 5.5 8 10 12.5" />
               </svg>
             </a>
-            <p class="min-w-[12.5rem] px-1 text-center text-sm font-medium tabular-nums"><%= weekNavText %></p>
+            <p class="min-w-[12.5rem] px-1 text-center text-sm font-medium tabular-nums"><%= periodNavText %></p>
             <a
-              href="<%= weekHref(nextWeek) %>"
+              href="<%= isMonth ? periodHref({ month: nextMonth }) : periodHref({ week: nextWeek }) %>"
               class="flex h-10 w-10 items-center justify-center rounded-r-full text-pen transition hover:bg-[#F5F0F7] dark:text-mist dark:hover:bg-[#2E2238]"
-              aria-label="Следующая неделя"
+              aria-label="<%= isMonth ? 'Следующий месяц' : 'Следующая неделя' %>"
             >
               <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M6 3.5 10.5 8 6 12.5" />
@@ -207,10 +229,10 @@
             </a>
           </nav>
           <a
-            href="<%= weekHref(currentWeek) %>"
-            class="rounded-full border px-3 py-2 text-sm <%= weekMonday === currentWeek ? 'border-pen bg-pen text-paper dark:border-mist dark:bg-mist dark:text-night' : 'border-[#EAE2E8] bg-white dark:border-[#2E2238] dark:bg-[#1B1422]' %>"
+            href="<%= isMonth ? periodHref({ month: currentMonth }) : periodHref({ week: currentWeek }) %>"
+            class="rounded-full border px-3 py-2 text-sm <%= (isMonth ? monthStart === currentMonth : weekMonday === currentWeek) ? 'border-pen bg-pen text-paper dark:border-mist dark:bg-mist dark:text-night' : 'border-[#EAE2E8] bg-white dark:border-[#2E2238] dark:bg-[#1B1422]' %>"
           >
-            Текущая неделя
+            <%= isMonth ? "Текущий месяц" : "Текущая неделя" %>
           </a>
         </div>
         <form action="/admin/logout" method="POST">
@@ -220,7 +242,7 @@
 
       <section class="mt-8">
         <h1 class="font-display text-3xl sm:text-4xl">Преподаватели</h1>
-        <p class="mt-2 text-sm text-ink/65 dark:text-pearl/65">Загрузка на выбранную неделю: уроки относительно окон в графике учителя.</p>
+        <p class="mt-2 text-sm text-ink/65 dark:text-pearl/65"><%= isMonth ? "Сводка за выбранный месяц: уроки, загрузка и сумма оплаченных занятий." : "Загрузка на выбранную неделю: уроки относительно окон в графике учителя." %></p>
         <div class="mt-6 grid gap-4 md:grid-cols-2">
           <% teacherCards.forEach(function (teacher) { %>
           <article class="rounded-3xl border border-line bg-pearl/80 p-5 dark:border-linight dark:bg-dusk">
@@ -231,6 +253,26 @@
             <% if (teacher.is_active === false) { %>
             <p class="mt-2 text-xs text-ink/50 dark:text-pearl/50">Не принимает записи</p>
             <% } %>
+            <% if (isMonth) { %>
+            <div class="mt-5 grid grid-cols-3 gap-2">
+              <div class="rounded-2xl bg-white/80 px-3 py-3 dark:bg-night/40">
+                <p class="text-[11px] text-ink/50 dark:text-pearl/45">Уроки</p>
+                <p class="mt-1 font-display text-2xl leading-none"><%= teacher.monthStats.booked %></p>
+                <p class="mt-1 text-[11px] text-ink/45 dark:text-pearl/40">из <%= teacher.monthStats.total %> окон</p>
+              </div>
+              <div class="rounded-2xl bg-white/80 px-3 py-3 dark:bg-night/40">
+                <p class="text-[11px] text-ink/50 dark:text-pearl/45">Загрузка</p>
+                <p class="mt-1 font-display text-2xl leading-none"><%= teacher.monthStats.percent %>%</p>
+                <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-line dark:bg-linight">
+                  <div class="h-full rounded-full bg-pen dark:bg-mist" style="width: <%= teacher.monthStats.percent %>%"></div>
+                </div>
+              </div>
+              <div class="rounded-2xl bg-white/80 px-3 py-3 dark:bg-night/40">
+                <p class="text-[11px] text-ink/50 dark:text-pearl/45">Оплачено</p>
+                <p class="mt-1 font-display text-lg leading-tight"><%= formatSum(teacher.monthStats.paidSum) %></p>
+              </div>
+            </div>
+            <% } else { %>
             <div class="mt-5 grid grid-cols-7 gap-1.5">
               <% teacher.days.forEach(function (day) { %>
               <div class="text-center">
@@ -252,6 +294,7 @@
               </div>
               <% }) %>
             </div>
+            <% } %>
           </article>
           <% }) %>
         </div>
@@ -260,12 +303,14 @@
       <section class="mt-12 overflow-visible rounded-3xl border border-[#EAE2E8] bg-white p-6 shadow-sm dark:border-[#2E2238] dark:bg-[#1B1422] md:p-8">
         <div class="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 class="font-display text-3xl">Записи недели</h2>
-            <p class="mt-1 text-sm text-ink/65 dark:text-pearl/65">Уроки выбранной недели, сгруппированные по дням.</p>
+            <h2 class="font-display text-3xl"><%= isMonth ? "Записи месяца" : "Записи недели" %></h2>
+            <p class="mt-1 text-sm text-ink/65 dark:text-pearl/65"><%= isMonth ? "Все занятия выбранного месяца, сгруппированные по датам." : "Уроки выбранной недели, сгруппированные по дням." %></p>
           </div>
           <% if (session.role === "school") { %>
           <form method="GET" action="/admin" class="flex flex-wrap gap-2">
+            <input type="hidden" name="view" value="<%= viewMode %>" />
             <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <input type="hidden" name="month" value="<%= monthStart %>" />
             <label class="sr-only" for="filter-teacher">Преподаватель</label>
             <select
               id="filter-teacher"
@@ -302,7 +347,7 @@
               <path d="M8 3.5v3M16 3.5v3M3.5 10h17" />
             </svg>
           </span>
-          <p class="mt-4 font-display text-2xl">На эту неделю занятий пока не запланировано</p>
+          <p class="mt-4 font-display text-2xl"><%= isMonth ? "На этот месяц занятий пока не запланировано" : "На эту неделю занятий пока не запланировано" %></p>
           <p class="mt-2 max-w-sm text-sm text-ink/60 dark:text-pearl/60">Новые заявки с сайта и из Telegram появятся здесь в день урока.</p>
         </div>
         <% } else { %>
@@ -361,7 +406,9 @@
                     </div>
                   </div>
                   <form action="/admin/status/<%= b.id %>" method="POST" class="status-dropdown relative z-10 shrink-0 overflow-visible sm:pl-3">
+                    <input type="hidden" name="view" value="<%= viewMode %>" />
                     <input type="hidden" name="week" value="<%= weekMonday %>" />
+                    <input type="hidden" name="month" value="<%= monthStart %>" />
                     <input type="hidden" name="language" value="<%= filterLanguage %>" />
                     <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
                     <input type="hidden" name="status" value="<%= b.status %>" />
@@ -415,7 +462,9 @@
         <h2 class="font-display text-3xl">Новый преподаватель</h2>
         <p class="mt-2 text-sm text-ink/65 dark:text-pearl/65">Карточка появится в сетке сразу после сохранения. Слоты ученикам считаются по дням смены и часам.</p>
         <form action="/admin/teachers" method="POST" class="mt-6 space-y-5">
-          <input type="hidden" name="week" value="<%= weekMonday %>" />
+          <input type="hidden" name="view" value="<%= viewMode %>" />
+                    <input type="hidden" name="week" value="<%= weekMonday %>" />
+                    <input type="hidden" name="month" value="<%= monthStart %>" />
           <div class="grid gap-4 sm:grid-cols-2">
             <label class="block">
               <span class="text-sm">Имя</span>
@@ -516,14 +565,18 @@
         <a id="receipt-download" class="mt-3 inline-block text-sm underline" download="receipt">Скачать файл</a>
         <div class="mt-6 flex flex-wrap gap-3">
           <form id="receipt-form-confirm" method="POST" action="/admin/payment/0">
-            <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <input type="hidden" name="view" value="<%= viewMode %>" />
+                    <input type="hidden" name="week" value="<%= weekMonday %>" />
+                    <input type="hidden" name="month" value="<%= monthStart %>" />
             <input type="hidden" name="language" value="<%= filterLanguage %>" />
             <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
             <input id="receipt-confirm" type="hidden" name="action" value="confirm" />
             <button type="submit" class="rounded-full bg-emerald-600 px-4 py-2 text-sm text-white">Подтвердить оплату</button>
           </form>
           <form id="receipt-form-reject" method="POST" action="/admin/payment/0">
-            <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <input type="hidden" name="view" value="<%= viewMode %>" />
+                    <input type="hidden" name="week" value="<%= weekMonday %>" />
+                    <input type="hidden" name="month" value="<%= monthStart %>" />
             <input type="hidden" name="language" value="<%= filterLanguage %>" />
             <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
             <input id="receipt-reject" type="hidden" name="action" value="reject" />

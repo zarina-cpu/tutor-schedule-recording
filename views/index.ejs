@@ -51,6 +51,7 @@
       href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Sora:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
     <style>
       .choice-card:hover:not(:has(input:checked)) {
         background: #f3e8ff;
@@ -79,6 +80,109 @@
         background: #a855f7;
         color: #110c15;
         border-color: #a855f7;
+      }
+      .flatpickr-calendar {
+        font-family: "Sora", system-ui, sans-serif;
+        border: 1px solid #eae2e8;
+        border-radius: 1.25rem;
+        box-shadow: 0 24px 60px -28px rgba(107, 33, 168, 0.28);
+        overflow: hidden;
+      }
+      .flatpickr-months .flatpickr-month,
+      .flatpickr-weekdays,
+      .flatpickr-current-month .flatpickr-monthDropdown-months {
+        background: #faf7f9;
+      }
+      .flatpickr-weekday {
+        color: #6b21a8;
+        font-weight: 600;
+      }
+      .flatpickr-day.selected,
+      .flatpickr-day.startRange,
+      .flatpickr-day.endRange {
+        background: #6b21a8;
+        border-color: #6b21a8;
+      }
+      .flatpickr-day:hover {
+        background: #f3e8ff;
+        border-color: #f3e8ff;
+      }
+      .flatpickr-day.today {
+        border-color: #6b21a8;
+      }
+      .flatpickr-day.flatpickr-disabled {
+        color: #c4b7c8 !important;
+      }
+      .flatpickr-day.tb-day-free {
+        background: #dcfce7;
+        border-color: #86efac;
+        color: #166534;
+        font-weight: 600;
+      }
+      .flatpickr-day.tb-day-full {
+        background: #fee2e2;
+        border-color: #fecaca;
+        color: #991b1b !important;
+        text-decoration: line-through;
+      }
+      .flatpickr-day.tb-day-off {
+        background: #f4eef7;
+        border-color: #eae2e8;
+        color: #9ca3af !important;
+      }
+      .flatpickr-day.tb-day-free.selected,
+      .flatpickr-day.tb-day-free:hover {
+        background: #6b21a8;
+        border-color: #6b21a8;
+        color: #ffffff;
+      }
+      .dark .flatpickr-calendar {
+        background: #1b1422;
+        border-color: #2e2238;
+        color: #f5f0f7;
+      }
+      .dark .flatpickr-months .flatpickr-month,
+      .dark .flatpickr-weekdays,
+      .dark .flatpickr-innerContainer,
+      .dark .flatpickr-rContainer,
+      .dark .flatpickr-days,
+      .dark .flatpickr-day,
+      .dark .flatpickr-current-month .flatpickr-monthDropdown-months {
+        background: #1b1422;
+        color: #f5f0f7;
+      }
+      .dark .flatpickr-day.selected {
+        background: #a855f7;
+        border-color: #a855f7;
+        color: #110c15;
+      }
+      .dark .flatpickr-day:hover {
+        background: #2e2238;
+        border-color: #2e2238;
+      }
+      .dark .flatpickr-day.flatpickr-disabled {
+        color: #5c4d68 !important;
+      }
+      .dark .flatpickr-day.tb-day-free {
+        background: #14532d;
+        border-color: #166534;
+        color: #bbf7d0;
+      }
+      .dark .flatpickr-day.tb-day-full {
+        background: #7f1d1d;
+        border-color: #991b1b;
+        color: #fecaca !important;
+      }
+      .dark .flatpickr-day.tb-day-off {
+        background: #2e2238;
+        border-color: #2e2238;
+        color: #6b6174 !important;
+      }
+      .dark .flatpickr-day.tb-day-free.selected,
+      .dark .flatpickr-day.tb-day-free:hover {
+        background: #a855f7;
+        border-color: #a855f7;
+        color: #110c15;
       }
       .pay-card[aria-pressed="true"] {
         border-color: #6b21a8;
@@ -266,12 +370,19 @@
                 <input
                   id="date"
                   name="date"
-                  type="date"
+                  type="text"
                   required
-                  min="<%= today %>"
+                  placeholder="Выберите дату"
+                  autocomplete="off"
+                  inputmode="none"
                   class="mt-2 w-full rounded-2xl border border-line bg-alabaster/80 px-4 py-3.5 text-sm outline-none transition focus:border-moss focus:ring-4 focus:ring-moss/15 dark:border-linight dark:bg-night/40 dark:focus:border-amethyst dark:focus:ring-amethyst/15"
                 />
               </label>
+              <p class="mt-3 flex flex-wrap gap-3 text-xs text-emeraldink/60 dark:text-mist/55">
+                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-emerald-400"></span>свободный день</span>
+                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-rose-400"></span>занят</span>
+                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-line dark:bg-linight"></span>выходной</span>
+              </p>
               <p class="mt-5 text-sm text-emeraldink/60 dark:text-mist/60">Свободное время</p>
               <input
                 id="time_slot"
@@ -380,6 +491,8 @@
         </section>
       </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
     <script>
       document.getElementById("theme-toggle").addEventListener("click", function () {
         var root = document.documentElement;
@@ -395,6 +508,9 @@
       var submitBtn = document.getElementById("submit-btn");
       var teachers = <%- JSON.stringify(teachers) %>;
       var teacherIdInput = document.getElementById("teacher_id");
+      var lastDisabledTeacher = null;
+      var datePicker = null;
+      var calendarMeta = { off_weekdays: [], full_dates: [], free_dates: [] };
 
       function teachersForLanguage(language) {
         return teachers.filter(function (item) {
@@ -460,12 +576,85 @@
             button.addEventListener("click", function () {
               teacherIdInput.value = String(item.id);
               updateTeacherCard();
+              loadDisabledDates();
               loadSlots();
             });
             picker.appendChild(button);
           });
         }
         document.getElementById("summary-teacher").textContent = teacher.name;
+      }
+
+      function isoFromPicker(date) {
+        if (!date) return "";
+        var year = date.getFullYear();
+        var month = String(date.getMonth() + 1).padStart(2, "0");
+        var day = String(date.getDate()).padStart(2, "0");
+        return year + "-" + month + "-" + day;
+      }
+
+      function paintCalendarDay(dayElem) {
+        if (!dayElem || !dayElem.dateObj) return;
+        dayElem.classList.remove("tb-day-free", "tb-day-full", "tb-day-off");
+        var date = dayElem.dateObj;
+        var iso = isoFromPicker(date);
+        if ((calendarMeta.off_weekdays || []).indexOf(date.getDay()) !== -1) {
+          dayElem.classList.add("tb-day-off");
+          return;
+        }
+        if ((calendarMeta.full_dates || []).indexOf(iso) !== -1) {
+          dayElem.classList.add("tb-day-full");
+          return;
+        }
+        if ((calendarMeta.free_dates || []).indexOf(iso) !== -1) {
+          dayElem.classList.add("tb-day-free");
+        }
+      }
+
+      function applyDisabledDates(offWeekdays, fullDates, freeDates) {
+        calendarMeta = {
+          off_weekdays: offWeekdays || [],
+          full_dates: fullDates || [],
+          free_dates: freeDates || [],
+        };
+        var disable = [
+          function (date) {
+            return (calendarMeta.off_weekdays || []).indexOf(date.getDay()) !== -1;
+          },
+        ].concat(calendarMeta.full_dates || []);
+        if (!datePicker) return;
+        datePicker.set("disable", disable);
+        datePicker.redraw();
+        var selected = datePicker.selectedDates[0];
+        if (!selected) return;
+        var iso = isoFromPicker(selected);
+        if (
+          (calendarMeta.full_dates || []).indexOf(iso) !== -1 ||
+          (calendarMeta.off_weekdays || []).indexOf(selected.getDay()) !== -1
+        ) {
+          datePicker.clear();
+          loadSlots();
+        }
+      }
+
+      function loadDisabledDates() {
+        var teacherId = teacherIdInput.value;
+        if (teacherId === lastDisabledTeacher) return;
+        lastDisabledTeacher = teacherId;
+        if (!teacherId) {
+          applyDisabledDates([], [], []);
+          return;
+        }
+        fetch("/api/disabled-dates?teacher_id=" + encodeURIComponent(teacherId))
+          .then(function (response) {
+            return response.json();
+          })
+          .then(function (data) {
+            applyDisabledDates(data.off_weekdays || [], data.full_dates || [], data.free_dates || []);
+          })
+          .catch(function () {
+            applyDisabledDates([], [], []);
+          });
       }
 
       function loadSlots() {
@@ -605,11 +794,27 @@
         updateSummary();
       }
 
-      dateInput.addEventListener("change", loadSlots);
+      datePicker = flatpickr(dateInput, {
+        locale: "ru",
+        dateFormat: "Y-m-d",
+        minDate: "today",
+        disableMobile: true,
+        onDayCreate: function (_dObj, _dStr, _fp, dayElem) {
+          paintCalendarDay(dayElem);
+        },
+        onChange: function () {
+          loadSlots();
+          updateSummary();
+        },
+      });
       form.addEventListener("change", function (event) {
         updateSummary();
-        if (event.target && event.target.name === "language") loadSlots();
+        if (event.target && event.target.name === "language") {
+          loadDisabledDates();
+          loadSlots();
+        }
       });
+      loadDisabledDates();
       Array.prototype.forEach.call(document.querySelectorAll(".pay-card"), function (card) {
         card.addEventListener("click", function () {
           setPayMethod(card.getAttribute("data-method"));

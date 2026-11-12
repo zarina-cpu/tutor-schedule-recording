@@ -19,6 +19,12 @@ const {
   weekDates,
   formatRange,
   formatDay,
+  monthStart,
+  addMonths,
+  monthEnd,
+  monthDates,
+  formatMonthLabel,
+  offJsWeekdays,
   normalizeWorkDays,
   normalizeTime,
 } = require("../lib/schedule");
@@ -42,7 +48,14 @@ const {
   setSessionCookie,
   clearAdminCookie,
 } = require("../lib/auth");
-const { notifyTutor, sendReceiptToAdmin, notifyPaidIfTelegram, notifyStudentTelegram } = require("../lib/notify");
+const {
+  notifyTutor,
+  notifyTutorPaid,
+  sendReceiptToAdmin,
+  notifyPaidIfTelegram,
+  notifyStudentTelegram,
+  telegramChatFromContact,
+} = require("../lib/notify");
 const {
   cardNumber,
   normalizePayment,
@@ -179,13 +192,48 @@ async function validateBooking(fields) {
   return teacher;
 }
 
+function parseView(value) {
+  return String(value || "") === "month" ? "month" : "week";
+}
+
 function adminQuery(params) {
   const query = new URLSearchParams();
-  if (params.week) query.set("week", params.week);
+  const view = parseView(params.view);
+  query.set("view", view);
+  if (view === "month") {
+    query.set("month", monthStart(params.month || params.week || todayISO()));
+  } else if (params.week) {
+    query.set("week", params.week);
+  }
   if (params.language) query.set("language", params.language);
   if (params.teacher_id) query.set("teacher_id", String(params.teacher_id));
   const text = query.toString();
   return text ? `?${text}` : "";
+}
+
+function adminRedirect(session, body) {
+  return `/admin${adminQuery({
+    view: body && body.view,
+    week: isValidDate(body && body.week) ? body.week : mondayOf(todayISO()),
+    month: body && body.month,
+    language: session && session.role === "school" ? String((body && body.language) || "") : "",
+    teacher_id: session && session.role === "school" ? String((body && body.teacher_id) || "") : "",
+  })}`;
+}
+
+function adminViewLocals() {
+  const today = todayISO();
+  return {
+    viewMode: "week",
+    monthStart: monthStart(today),
+    monthLabel: formatMonthLabel(today),
+    prevMonth: addMonths(today, -1),
+    nextMonth: addMonths(today, 1),
+    currentMonth: monthStart(today),
+    prevWeek: "",
+    nextWeek: "",
+    currentWeek: mondayOf(today),
+  };
 }
 
 function weekLoad(teacher, dates, bookings) {
@@ -209,6 +257,31 @@ function weekLoad(teacher, dates, bookings) {
       percent: total ? Math.round((booked / total) * 100) : 0,
     };
   });
+}
+
+function monthLoad(teacher, dates, bookings) {
+  let booked = 0;
+  let total = 0;
+  let paidSum = 0;
+  dates.forEach((date) => {
+    if (!isWorkDay(teacher, date)) return;
+    total += generateSlots(teacher.start_time, teacher.end_time).length;
+    bookings.forEach((item) => {
+      if (item.date !== date) return;
+      if (item.status === "Отменена") return;
+      if (Number(item.teacher_id) !== Number(teacher.id)) return;
+      booked += 1;
+      if (item.payment_status === "Оплачено") {
+        paidSum += Number(item.amount) || 0;
+      }
+    });
+  });
+  return {
+    booked,
+    total,
+    percent: total ? Math.round((booked / total) * 100) : 0,
+    paidSum,
+  };
 }
 
 app.get("/", async (req, res) => {
@@ -250,6 +323,38 @@ app.get("/api/slots", async (req, res) => {
   res.json({ available_slots, teacher: publicTeacher(teacher) });
 });
 
+app.get("/api/disabled-dates", async (req, res) => {
+  const teacherId = Number(req.query.teacher_id || 0);
+  const teacher = teacherId ? await getTeacherById(teacherId) : null;
+  if (!teacher) {
+    return res.json({ off_weekdays: [], full_dates: [], free_dates: [] });
+  }
+  const off_weekdays = offJsWeekdays(teacher);
+  const from = todayISO();
+  const to = addDays(from, 59);
+  const bookings = await listBookings({ from, to, teacherId: teacher.id });
+  const bookedByDate = {};
+  bookings.forEach((item) => {
+    if (item.status === "Отменена") return;
+    if (!bookedByDate[item.date]) bookedByDate[item.date] = new Set();
+    bookedByDate[item.date].add(item.time_slot);
+  });
+  const full_dates = [];
+  const free_dates = [];
+  for (let offset = 0; offset < 60; offset += 1) {
+    const date = addDays(from, offset);
+    if (!isWorkDay(teacher, date)) continue;
+    const slots = generateSlots(teacher.start_time, teacher.end_time);
+    const taken = bookedByDate[date] || new Set();
+    if (!slots.length || slots.every((slot) => taken.has(slot))) {
+      full_dates.push(date);
+      continue;
+    }
+    free_dates.push(date);
+  }
+  res.json({ off_weekdays, full_dates, free_dates });
+});
+
 app.post("/book", async (req, res) => {
   const fields = readBookingFields(req.body);
   const teacher = await validateBooking(fields);
@@ -270,8 +375,11 @@ app.post("/book", async (req, res) => {
       ...payment,
       teacher_id: teacher.id,
       source: "сайт",
+      tg_chat_id: telegramChatFromContact(fields.contact) || null,
     });
-    await notifyTutor(bot, booking, "сайт");
+    if (booking.payment_method === "free" || booking.payment_method === "receipt") {
+      await notifyTutor(bot, booking, "сайт");
+    }
     if (booking.payment_method === "receipt") {
       await sendReceiptToAdmin(booking, "сайт");
       return res.redirect("/?receipt=1");
@@ -301,11 +409,15 @@ app.post("/book", async (req, res) => {
 async function markPaid(bookingId, method, externalId) {
   const current = await getBookingById(bookingId);
   if (!current) return null;
+  const alreadyPaid = current.payment_status === "Оплачено";
   const booking = await updateBookingPayment(bookingId, {
     payment_method: method || current.payment_method,
     payment_status: "Оплачено",
     external_payment_id: externalId || current.external_payment_id,
   });
+  if (!alreadyPaid) {
+    await notifyTutorPaid(bot, booking, booking.source || "сайт");
+  }
   await notifyPaidIfTelegram(booking);
   return booking;
 }
@@ -318,7 +430,8 @@ app.get("/payment/stripe/success", async (req, res) => {
   }
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    if (session.payment_status !== "paid") {
+    const paid = session.payment_status === "paid" || session.status === "complete";
+    if (!paid) {
       return res.redirect("/?error=1");
     }
     const id = (session.metadata && session.metadata.booking_id) || bookingId;
@@ -393,13 +506,11 @@ app.get("/admin", async (req, res) => {
       weekDays: WEEK_DAYS,
       languages: LANGUAGES,
       adminQuery: "",
-      prevWeek: "",
-      nextWeek: "",
-    currentWeek: mondayOf(todayISO()),
-    paymentBadge,
-    formatSum,
-  });
-}
+      paymentBadge,
+      formatSum,
+      ...adminViewLocals(),
+    });
+  }
 
   const allTeachers = await listTeachers();
   let sessionView = session;
@@ -417,9 +528,21 @@ app.get("/admin", async (req, res) => {
     };
   }
 
+  const viewMode = parseView(req.query.view);
   const requestedWeek = String(req.query.week || "");
-  const weekMonday = mondayOf(isValidDate(requestedWeek) ? requestedWeek : todayISO());
-  const dates = weekDates(weekMonday);
+  const requestedMonth = String(req.query.month || req.query.week || "");
+  const weekMonday = mondayOf(
+    isValidDate(requestedWeek)
+      ? requestedWeek
+      : isValidDate(String(req.query.month || ""))
+        ? String(req.query.month)
+        : todayISO()
+  );
+  const monthAnchor = monthStart(isValidDate(requestedMonth) ? requestedMonth : todayISO());
+  const weekDaysList = weekDates(weekMonday);
+  const monthDaysList = monthDates(monthAnchor);
+  const rangeFrom = viewMode === "month" ? monthDaysList[0] : weekDaysList[0];
+  const rangeTo = viewMode === "month" ? monthEnd(monthAnchor) : weekDaysList[6];
   const filterLanguage =
     sessionView.role === "school" ? String(req.query.language || "") : sessionView.language;
   const filterTeacherId =
@@ -432,12 +555,12 @@ app.get("/admin", async (req, res) => {
       ? allTeachers.filter((item) => item.id === Number(sessionView.teacherId))
       : allTeachers;
 
-  const weekAllBookings = await listBookings({
-    from: dates[0],
-    to: dates[6],
+  const periodAllBookings = await listBookings({
+    from: rangeFrom,
+    to: rangeTo,
     teacherId: sessionView.role === "teacher" ? sessionView.teacherId : undefined,
   });
-  const weekBookings = weekAllBookings.filter((item) => {
+  const periodBookings = periodAllBookings.filter((item) => {
     if (sessionView.role === "school" && filterLanguage && item.language !== filterLanguage) {
       return false;
     }
@@ -450,11 +573,14 @@ app.get("/admin", async (req, res) => {
   const teacherCards = visibleTeachers.map((teacher) => ({
     ...publicTeacher(teacher),
     hours: `${teacher.start_time}–${teacher.end_time}`,
-    days: weekLoad(teacher, dates, weekAllBookings),
+    days: weekLoad(teacher, weekDaysList, periodAllBookings),
+    monthStats: monthLoad(teacher, monthDaysList, periodAllBookings),
   }));
 
   const query = adminQuery({
+    view: viewMode,
     week: weekMonday,
+    month: monthAnchor,
     language: sessionView.role === "school" ? filterLanguage : "",
     teacher_id: sessionView.role === "school" ? filterTeacherId : "",
   });
@@ -463,7 +589,7 @@ app.get("/admin", async (req, res) => {
     authorized: true,
     loginError: false,
     telegramLink: telegramLink(),
-    bookings: weekBookings,
+    bookings: periodBookings,
     statuses: STATUSES,
     session: sessionView,
     teachers: visibleTeachers.map(publicTeacher),
@@ -472,7 +598,7 @@ app.get("/admin", async (req, res) => {
     filterTeacherId: filterTeacherId ? String(filterTeacherId) : "",
     weekMonday,
     weekLabel: formatRange(weekMonday),
-    weekDates: dates.map((date, index) => ({
+    weekDates: weekDaysList.map((date, index) => ({
       date,
       key: WEEK_DAYS[index],
       label: formatDay(date),
@@ -480,6 +606,12 @@ app.get("/admin", async (req, res) => {
     weekDays: WEEK_DAYS,
     languages: LANGUAGES,
     adminQuery: query,
+    viewMode,
+    monthStart: monthAnchor,
+    monthLabel: formatMonthLabel(monthAnchor),
+    prevMonth: addMonths(monthAnchor, -1),
+    nextMonth: addMonths(monthAnchor, 1),
+    currentMonth: monthStart(todayISO()),
     prevWeek: addDays(weekMonday, -7),
     nextWeek: addDays(weekMonday, 7),
     currentWeek: mondayOf(todayISO()),
@@ -521,16 +653,7 @@ app.post("/admin/status/:id", async (req, res) => {
       console.error(error);
     }
   }
-  const week = String(req.body.week || "");
-  const language = String(req.body.language || "");
-  const teacher_id = String(req.body.teacher_id || "");
-  res.redirect(
-    `/admin${adminQuery({
-      week: isValidDate(week) ? week : mondayOf(todayISO()),
-      language: session.role === "school" ? language : "",
-      teacher_id: session.role === "school" ? teacher_id : "",
-    })}`
-  );
+  res.redirect(adminRedirect(session, req.body));
 });
 
 app.get("/admin/receipt/:id", async (req, res) => {
@@ -562,16 +685,7 @@ app.post("/admin/payment/:id", async (req, res) => {
         : "❌ Чек отклонён. Напишите преподавателю или запишитесь заново: /start";
     await notifyStudentTelegram(booking.tg_chat_id, text);
   }
-  const week = String(req.body.week || "");
-  const language = String(req.body.language || "");
-  const teacher_id = String(req.body.teacher_id || "");
-  res.redirect(
-    `/admin${adminQuery({
-      week: isValidDate(week) ? week : mondayOf(todayISO()),
-      language: session.role === "school" ? language : "",
-      teacher_id: session.role === "school" ? teacher_id : "",
-    })}`
-  );
+  res.redirect(adminRedirect(session, req.body));
 });
 
 app.post("/admin/teachers", async (req, res) => {
@@ -598,8 +712,7 @@ app.post("/admin/teachers", async (req, res) => {
     end_time,
     is_active,
   });
-  const week = String(req.body.week || "");
-  res.redirect(`/admin${adminQuery({ week: isValidDate(week) ? week : mondayOf(todayISO()) })}`);
+  res.redirect(adminRedirect(session, req.body));
 });
 
 if (process.env.VERCEL) {
