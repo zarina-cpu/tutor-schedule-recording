@@ -30,8 +30,10 @@ const {
   createTeacher,
   getBookedSlots,
   listBookings,
+  getBookingById,
   createBooking,
   updateBookingStatus,
+  updateBookingPayment,
 } = require("../lib/db");
 const storage = require("../lib/storage");
 const {
@@ -40,15 +42,56 @@ const {
   setSessionCookie,
   clearAdminCookie,
 } = require("../lib/auth");
-const { notifyTutor } = require("../lib/notify");
-const { createBot } = require("./telegram");
+const { notifyTutor, sendReceiptToAdmin, notifyPaidIfTelegram, notifyStudentTelegram } = require("../lib/notify");
+const {
+  cardNumber,
+  normalizePayment,
+  parseDataUrl,
+  createStripeCheckout,
+  paymeCheckoutUrl,
+  paymentBadge,
+  formatSum,
+} = require("../lib/payment");
+const { handlePaymeRpc } = require("../lib/payme");
+const { createBot, telegramWebhook } = require("../lib/telegram");
 
+const Stripe = require("stripe");
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const app = express();
 const bot = createBot();
 
 app.set("views", path.join(process.cwd(), "views"));
 app.set("view engine", "ejs");
-app.use(express.urlencoded({ extended: false }));
+
+app.post("/payment/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!secret || !key) {
+    return res.status(400).send("Stripe webhook is not configured");
+  }
+  try {
+    await ensureReady();
+    const event = Stripe(key).webhooks.constructEvent(
+      req.body,
+      req.headers["stripe-signature"],
+      secret
+    );
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      const session = event.data.object;
+      const bookingId = session.metadata && session.metadata.booking_id;
+      if (bookingId) {
+        await markPaid(bookingId, "stripe", session.id);
+      }
+    }
+    res.json({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook:", error.message);
+    res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+});
+
+app.use(express.urlencoded({ extended: false, limit: "5mb" }));
+app.use(express.json({ limit: "5mb" }));
 
 let boot;
 app.use(async (req, res, next) => {
@@ -92,6 +135,12 @@ function pageLocals(extra) {
     languages: LANGUAGES,
     today: todayISO(),
     telegramLink: telegramLink(),
+    cardNumber: cardNumber(),
+    success: false,
+    paid: false,
+    canceled: false,
+    receipt: false,
+    error: false,
     ...extra,
   };
 }
@@ -168,6 +217,9 @@ app.get("/", async (req, res) => {
     "index",
     pageLocals({
       success: req.query.success === "1",
+      paid: req.query.paid === "1",
+      canceled: req.query.payment_canceled === "1",
+      receipt: req.query.receipt === "1",
       error: req.query.error === "1",
       teachers,
     })
@@ -204,14 +256,39 @@ app.post("/book", async (req, res) => {
   if (!teacher) {
     return res.redirect("/?error=1");
   }
+  const method = String(req.body.payment_method || "").trim();
+  const receiptRaw = String(req.body.receipt_data || "").trim();
+  const payment = normalizePayment(fields.service, method, receiptRaw || null);
+  if (payment.payment_method === "receipt") {
+    if (!parseDataUrl(payment.receipt_data)) {
+      return res.redirect("/?error=1");
+    }
+  }
   try {
     const booking = await createBooking({
       ...fields,
+      ...payment,
       teacher_id: teacher.id,
       source: "сайт",
     });
     await notifyTutor(bot, booking, "сайт");
-    res.redirect("/?success=1");
+    if (booking.payment_method === "receipt") {
+      await sendReceiptToAdmin(booking, "сайт");
+      return res.redirect("/?receipt=1");
+    }
+    if (booking.payment_method === "free") {
+      return res.redirect("/?success=1");
+    }
+    const baseUrl = `${req.headers["x-forwarded-proto"] || req.protocol}://${req.get("host")}`;
+    if (booking.payment_method === "payme") {
+      return res.redirect(paymeCheckoutUrl(booking, baseUrl));
+    }
+    if (!stripe) {
+      throw new Error("STRIPE_SECRET_KEY is not set");
+    }
+    const checkout = await createStripeCheckout(booking, baseUrl, stripe);
+    await updateBookingPayment(booking.id, { external_payment_id: checkout.id });
+    return res.redirect(checkout.url);
   } catch (error) {
     if (error instanceof DuplicateSlotError || error.code === "23505") {
       return res.redirect("/?error=1");
@@ -219,6 +296,81 @@ app.post("/book", async (req, res) => {
     console.error(error);
     res.redirect("/?error=1");
   }
+});
+
+async function markPaid(bookingId, method, externalId) {
+  const current = await getBookingById(bookingId);
+  if (!current) return null;
+  const booking = await updateBookingPayment(bookingId, {
+    payment_method: method || current.payment_method,
+    payment_status: "Оплачено",
+    external_payment_id: externalId || current.external_payment_id,
+  });
+  await notifyPaidIfTelegram(booking);
+  return booking;
+}
+
+app.get("/payment/stripe/success", async (req, res) => {
+  const sessionId = String(req.query.session_id || "");
+  const bookingId = String(req.query.booking_id || "");
+  if (!sessionId || !stripe) {
+    return res.redirect("/?error=1");
+  }
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") {
+      return res.redirect("/?error=1");
+    }
+    const id = (session.metadata && session.metadata.booking_id) || bookingId;
+    await markPaid(id, "stripe", session.id);
+    return res.redirect("/?success=1&paid=1");
+  } catch (error) {
+    console.error("Stripe success:", error.message);
+    return res.redirect("/?error=1");
+  }
+});
+
+app.get("/payment/success", (req, res) => {
+  const sessionId = String(req.query.session_id || "");
+  const bookingId = String(req.query.booking_id || "");
+  if (sessionId) {
+    return res.redirect(
+      `/payment/stripe/success?session_id=${encodeURIComponent(sessionId)}&booking_id=${encodeURIComponent(bookingId)}`
+    );
+  }
+  return res.redirect("/?success=1");
+});
+
+async function paymeWebhook(req, res) {
+  try {
+    const payload = await handlePaymeRpc(req);
+    res.json(payload);
+  } catch (error) {
+    console.error("Payme webhook:", error);
+    res.status(500).json({
+      jsonrpc: "2.0",
+      id: req.body && req.body.id,
+      error: { code: -32400, message: "Internal error" },
+    });
+  }
+}
+
+app.post("/api/payme/webhook", paymeWebhook);
+app.post("/payme/webhook", paymeWebhook);
+
+app.get("/payment/payme/stub", async (req, res) => {
+  const booking = await getBookingById(req.query.booking_id);
+  if (!booking) return res.redirect("/?error=1");
+  res.render("payment-payme-stub", {
+    booking,
+    amountLabel: formatSum(booking.amount),
+  });
+});
+
+app.post("/payment/payme/stub", async (req, res) => {
+  const booking = await markPaid(req.body.booking_id, "payme", `payme_stub_${Date.now()}`);
+  if (!booking) return res.redirect("/?error=1");
+  res.redirect("/?success=1&paid=1");
 });
 
 app.get("/admin", async (req, res) => {
@@ -243,9 +395,11 @@ app.get("/admin", async (req, res) => {
       adminQuery: "",
       prevWeek: "",
       nextWeek: "",
-      currentWeek: mondayOf(todayISO()),
-    });
-  }
+    currentWeek: mondayOf(todayISO()),
+    paymentBadge,
+    formatSum,
+  });
+}
 
   const allTeachers = await listTeachers();
   let sessionView = session;
@@ -329,6 +483,8 @@ app.get("/admin", async (req, res) => {
     prevWeek: addDays(weekMonday, -7),
     nextWeek: addDays(weekMonday, 7),
     currentWeek: mondayOf(todayISO()),
+    paymentBadge,
+    formatSum,
   });
 });
 
@@ -377,6 +533,47 @@ app.post("/admin/status/:id", async (req, res) => {
   );
 });
 
+app.get("/admin/receipt/:id", async (req, res) => {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ ok: false });
+  const booking = await getBookingById(req.params.id);
+  if (!booking) return res.status(404).json({ ok: false });
+  if (session.role === "teacher" && Number(booking.teacher_id) !== Number(session.teacherId)) {
+    return res.status(403).json({ ok: false });
+  }
+  res.json({ ok: true, receipt_data: booking.receipt_data || null, id: booking.id });
+});
+
+app.post("/admin/payment/:id", async (req, res) => {
+  const session = getSession(req);
+  if (!session) return res.redirect("/admin");
+  const current = await getBookingById(req.params.id);
+  if (!current) return res.redirect("/admin");
+  if (session.role === "teacher" && Number(current.teacher_id) !== Number(session.teacherId)) {
+    return res.redirect("/admin");
+  }
+  const action = String(req.body.action || "");
+  const payment_status = action === "reject" ? "Отклонено" : "Оплачено";
+  const booking = await updateBookingPayment(req.params.id, { payment_status });
+  if (booking && booking.tg_chat_id) {
+    const text =
+      payment_status === "Оплачено"
+        ? "✅ Оплата по чеку подтверждена. Ваша запись активна."
+        : "❌ Чек отклонён. Напишите преподавателю или запишитесь заново: /start";
+    await notifyStudentTelegram(booking.tg_chat_id, text);
+  }
+  const week = String(req.body.week || "");
+  const language = String(req.body.language || "");
+  const teacher_id = String(req.body.teacher_id || "");
+  res.redirect(
+    `/admin${adminQuery({
+      week: isValidDate(week) ? week : mondayOf(todayISO()),
+      language: session.role === "school" ? language : "",
+      teacher_id: session.role === "school" ? teacher_id : "",
+    })}`
+  );
+});
+
 app.post("/admin/teachers", async (req, res) => {
   const session = getSession(req);
   if (!session || session.role !== "school") {
@@ -405,6 +602,22 @@ app.post("/admin/teachers", async (req, res) => {
   res.redirect(`/admin${adminQuery({ week: isValidDate(week) ? week : mondayOf(todayISO()) })}`);
 });
 
+if (process.env.VERCEL) {
+  const webhook = telegramWebhook(bot);
+  if (webhook) {
+    app.post("/telegram/webhook", webhook);
+  }
+}
+
+if (process.env.VERCEL && bot) {
+  const hookBase = process.env.PUBLIC_BASE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+  if (hookBase) {
+    bot.api.setWebhook(`${hookBase.replace(/\/$/, "")}/telegram/webhook`).catch((error) => {
+      console.error("Telegram setWebhook:", error.message);
+    });
+  }
+}
+
 if (process.env.NODE_ENV !== "production") {
   const port = process.env.PORT || 3000;
   ensureReady()
@@ -416,11 +629,20 @@ if (process.env.NODE_ENV !== "production") {
             .deleteWebhook({ drop_pending_updates: false })
             .catch((error) => console.error("Telegram webhook:", error.message))
             .finally(() => {
-              bot.start({
-                onStart: (info) => {
-                  console.log(`Telegram-бот @${info.username} запущен (polling)`);
-                },
-              });
+              try {
+                const started = bot.start({
+                  onStart: (info) => {
+                    console.log(`Telegram-бот @${info.username} запущен (polling)`);
+                  },
+                });
+                if (started && typeof started.catch === "function") {
+                  started.catch((error) => {
+                    console.error("Telegram polling:", error.message);
+                  });
+                }
+              } catch (error) {
+                console.error("Telegram polling:", error.message);
+              }
             });
         } else {
           console.log("TELEGRAM_BOT_TOKEN не задан — бот не запущен.");

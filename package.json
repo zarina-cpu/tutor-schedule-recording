@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node api/index.js",
     "dev": "node api/index.js",
-    "build": "node --check api/index.js && node --check api/telegram.js && node --check lib/db.js && node --check lib/storage.js && node --check lib/auth.js"
+    "build": "node --check api/index.js && node --check lib/telegram.js && node --check lib/db.js && node --check lib/payment.js && node --check lib/payme.js && node --check lib/notify.js && node --check lib/storage.js && node --check lib/auth.js",
+    "vercel-build": "node --check api/index.js && node --check lib/payme.js && node --check lib/payment.js"
   },
   "engines": {
     "node": ">=18"
@@ -23,6 +24,7 @@
     "express": "^4.21.2",
     "files-sdk": "^2.6.2",
     "grammy": "^1.35.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "stripe": "^17.7.0"
   }
 }

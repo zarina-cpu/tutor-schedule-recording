@@ -1,0 +1,12 @@
+{
+  "framework": null,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "public",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{views/**,schema.sql,lib/**,public/**}",
+      "maxDuration": 60
+    }
+  }
+}

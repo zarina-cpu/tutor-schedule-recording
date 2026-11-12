@@ -161,6 +161,13 @@
         function shortService(name) {
           return String(name || "").replace(/\s*\([^)]+\)\s*$/, "");
         }
+        function payTone(tone) {
+          if (tone === "paid") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200";
+          if (tone === "review") return "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200";
+          if (tone === "wait") return "bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200";
+          if (tone === "reject") return "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200";
+          return "bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300";
+        }
         var weekStart = weekDates.length ? weekDates[0].date : weekMonday;
         var weekEnd = weekDates.length ? weekDates[weekDates.length - 1].date : weekMonday;
         var weekNavText = weekDates.length ? navRange(weekStart, weekEnd) : weekLabel;
@@ -339,6 +346,17 @@
                         <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= b.language %></span>
                         <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= b.teacher_name || b.teacher || "—" %></span>
                         <span class="rounded-full bg-[#F5F0F7] px-2.5 py-0.5 text-xs text-ink/75 dark:bg-[#2E2238] dark:text-pearl/75"><%= shortService(b.service) %></span>
+                        <% var pay = paymentBadge(b); %>
+                        <span class="rounded-full px-2.5 py-0.5 text-xs font-medium <%= payTone(pay.tone) %>"><%= pay.text %></span>
+                        <% if (b.has_receipt) { %>
+                        <button
+                          type="button"
+                          class="open-receipt rounded-full border border-pen px-2.5 py-0.5 text-xs font-medium text-pen dark:border-mist dark:text-mist"
+                          data-id="<%= b.id %>"
+                        >
+                          Открыть чек
+                        </button>
+                        <% } %>
                       </div>
                     </div>
                   </div>
@@ -485,6 +503,35 @@
       <% } %>
       <% } %>
     </div>
+    <div id="receipt-modal" class="fixed inset-0 z-[80] hidden">
+      <div class="absolute inset-0 bg-night/70" id="receipt-backdrop"></div>
+      <div class="relative mx-auto mt-10 max-h-[90vh] w-[min(52rem,calc(100%-2rem))] overflow-auto rounded-3xl border border-line bg-paper p-5 shadow-2xl dark:border-linight dark:bg-dusk">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-display text-2xl">Чек оплаты</h2>
+          <button id="receipt-close" type="button" class="rounded-full border border-line px-3 py-1 text-sm dark:border-linight">Закрыть</button>
+        </div>
+        <p id="receipt-error" class="mb-3 hidden text-sm text-rose-600 dark:text-rose-300"></p>
+        <img id="receipt-image" alt="Чек" class="max-h-[60vh] w-full rounded-2xl object-contain" />
+        <iframe id="receipt-frame" class="hidden h-[60vh] w-full rounded-2xl bg-white" title="PDF чек"></iframe>
+        <a id="receipt-download" class="mt-3 inline-block text-sm underline" download="receipt">Скачать файл</a>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <form id="receipt-form-confirm" method="POST" action="/admin/payment/0">
+            <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <input type="hidden" name="language" value="<%= filterLanguage %>" />
+            <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
+            <input id="receipt-confirm" type="hidden" name="action" value="confirm" />
+            <button type="submit" class="rounded-full bg-emerald-600 px-4 py-2 text-sm text-white">Подтвердить оплату</button>
+          </form>
+          <form id="receipt-form-reject" method="POST" action="/admin/payment/0">
+            <input type="hidden" name="week" value="<%= weekMonday %>" />
+            <input type="hidden" name="language" value="<%= filterLanguage %>" />
+            <input type="hidden" name="teacher_id" value="<%= filterTeacherId %>" />
+            <input id="receipt-reject" type="hidden" name="action" value="reject" />
+            <button type="submit" class="rounded-full bg-rose-600 px-4 py-2 text-sm text-white">Отклонить чек</button>
+          </form>
+        </div>
+      </div>
+    </div>
     <script>
       document.getElementById("theme-toggle").addEventListener("click", function () {
         var root = document.documentElement;
@@ -534,8 +581,98 @@
       });
 
       document.addEventListener("keydown", function (event) {
-        if (event.key === "Escape") closeStatusMenus();
+        if (event.key === "Escape") {
+          closeStatusMenus();
+          var modal = document.getElementById("receipt-modal");
+          if (modal) modal.classList.add("hidden");
+        }
       });
+
+      function receiptEls() {
+        return {
+          modal: document.getElementById("receipt-modal"),
+          frame: document.getElementById("receipt-frame"),
+          image: document.getElementById("receipt-image"),
+          download: document.getElementById("receipt-download"),
+          confirm: document.getElementById("receipt-confirm"),
+          reject: document.getElementById("receipt-reject"),
+          error: document.getElementById("receipt-error"),
+          formConfirm: document.getElementById("receipt-form-confirm"),
+          formReject: document.getElementById("receipt-form-reject"),
+        };
+      }
+
+      function closeReceiptModal() {
+        var els = receiptEls();
+        if (els.modal) els.modal.classList.add("hidden");
+      }
+
+      function showReceiptError(message) {
+        var els = receiptEls();
+        if (!els.modal) return;
+        if (els.error) {
+          els.error.textContent = message;
+          els.error.classList.remove("hidden");
+        }
+        els.modal.classList.remove("hidden");
+      }
+
+      document.addEventListener("click", function (event) {
+        var open = event.target.closest(".open-receipt");
+        if (!open) {
+          if (event.target.id === "receipt-backdrop") closeReceiptModal();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        var id = open.getAttribute("data-id");
+        var els = receiptEls();
+        if (!els.modal) return;
+        if (els.error) els.error.classList.add("hidden");
+        els.modal.classList.remove("hidden");
+        if (els.image) {
+          els.image.removeAttribute("src");
+          els.image.classList.add("hidden");
+        }
+        if (els.frame) {
+          els.frame.removeAttribute("src");
+          els.frame.classList.add("hidden");
+        }
+        fetch("/admin/receipt/" + encodeURIComponent(id), { credentials: "same-origin" })
+          .then(function (response) {
+            if (!response.ok) throw new Error("Не удалось загрузить чек");
+            return response.json();
+          })
+          .then(function (data) {
+            if (!data.ok || !data.receipt_data) {
+              showReceiptError("Файл чека не найден в записи.");
+              return;
+            }
+            els = receiptEls();
+            if (els.confirm) els.confirm.value = "confirm";
+            if (els.reject) els.reject.value = "reject";
+            if (els.formConfirm) els.formConfirm.action = "/admin/payment/" + id;
+            if (els.formReject) els.formReject.action = "/admin/payment/" + id;
+            var isPdf = data.receipt_data.indexOf("data:application/pdf") === 0;
+            if (els.image) els.image.classList.toggle("hidden", isPdf);
+            if (els.frame) els.frame.classList.toggle("hidden", !isPdf);
+            if (isPdf) {
+              if (els.frame) els.frame.src = data.receipt_data;
+            } else if (els.image) {
+              els.image.src = data.receipt_data;
+            }
+            if (els.download) els.download.href = data.receipt_data;
+            if (els.modal) els.modal.classList.remove("hidden");
+          })
+          .catch(function () {
+            showReceiptError("Не удалось открыть чек. Обновите страницу и попробуйте ещё раз.");
+          });
+      });
+
+      var receiptClose = document.getElementById("receipt-close");
+      if (receiptClose) {
+        receiptClose.addEventListener("click", closeReceiptModal);
+      }
     </script>
   </body>
 </html>

@@ -36,6 +36,16 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS teacher VARCHAR(100);
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS teacher_id INTEGER;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS teacher_name VARCHAR(100);
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS source VARCHAR(50);
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount INTEGER DEFAULT 0;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30) DEFAULT 'free';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_status VARCHAR(40) DEFAULT 'Бесплатно';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS receipt_data TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS external_payment_id VARCHAR(150);
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tg_chat_id VARCHAR(50);
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payme_create_time BIGINT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payme_perform_time BIGINT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payme_cancel_time BIGINT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payme_state INTEGER;
 
 INSERT INTO teachers (name, role, language, work_days, start_time, end_time, is_active)
 SELECT seed.name, seed.role, seed.language, 'пн,вт,ср,чт,пт', '10:00', '20:00', TRUE

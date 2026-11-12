@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payme — скоро</title>
+    <script>
+      (function () {
+        var stored = localStorage.getItem("tutorbook-theme");
+        var dark =
+          stored === "dark" ||
+          (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              alabaster: "#FAF7F9",
+              ivory: "#FFFFFF",
+              emeraldink: "#1F1624",
+              moss: "#6B21A8",
+              line: "#EAE2E8",
+              night: "#110C15",
+              dusk: "#1B1422",
+              linight: "#2E2238",
+              mist: "#F5F0F7",
+              amethyst: "#A855F7",
+            },
+            fontFamily: {
+              display: ['"Cormorant Garamond"', "Georgia", "serif"],
+              sans: ['"Sora"', "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700&family=Sora:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="min-h-screen bg-alabaster text-emeraldink font-sans dark:bg-night dark:text-mist">
+    <div class="mx-auto max-w-md px-4 py-16">
+      <p class="text-sm text-moss dark:text-amethyst">Заглушка</p>
+      <h1 class="mt-2 font-display text-4xl">Payme Checkout</h1>
+      <p class="mt-3 text-sm text-emeraldink/70 dark:text-mist/70">
+        Касса Payme ещё не подключена. Запись №<%= booking.id %> сохранена со статусом «Ожидает оплаты».
+      </p>
+      <p class="mt-4 rounded-3xl border border-line bg-ivory p-5 text-sm dark:border-linight dark:bg-dusk">
+        <%= booking.student_name %> · <%= booking.service %><br />
+        <%= booking.date %> в <%= booking.time_slot %> · <%= amountLabel %>
+      </p>
+      <form action="/payment/payme/stub" method="POST" class="mt-6 space-y-3">
+        <input type="hidden" name="booking_id" value="<%= booking.id %>" />
+        <button type="submit" class="w-full rounded-full bg-moss py-3 text-ivory dark:bg-amethyst dark:text-night">
+          Отметить оплату (тест)
+        </button>
+      </form>
+      <a href="/" class="mt-6 inline-block text-sm underline">Вернуться на сайт</a>
+    </div>
+  </body>
+</html>
